@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>經典21點 - 支援分牌 + 自動爆牌判輸</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+    body {
+        font-family: 'Microsoft JhengHei', sans-serif;
+        background: #0a3d2a;
+        color: #fff;
+        text-align: center;
+        margin: 0;
+        padding: 15px;
+    }
+    h1 { color: gold; }
+    .chips { font-size: 1.3em; margin: 10px; }
+    button {
+        padding: 10px 20px;
+        margin: 5px;
+        font-size: 1.1em;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+    }
+    .btn-bet { background: #ffc107; color: black; }
+    .btn-hit { background: #dc3545; color: white; }
+    .btn-stand { background: #007bff; color: white; }
+    .btn-split { background: #6f42c1; color: white; }
+    .btn-restart { background: #28a745; color: white; }
+
+    .hand-container {
+        margin: 25px 0;
+        border: 2px solid #fff2;
+        border-radius: 12px;
+        padding: 10px;
+        position: relative;
+    }
+    .hand {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        min-height: 140px;
+    }
+    .card {
+        width: 80px;
+        height: 115px;
+        background: white;
+        color: black;
+        border-radius: 10px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 6px;
+        font-size: 26px;
+        transition: all 0.3s;
+    }
+    .card:hover { transform: translateY(-12px); }
+    .red { color: #e63939; }
+    .back {
+        background: linear-gradient(45deg, #1a1a1a, #333);
+        color: gold;
+        font-size: 45px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .bust { 
+        position: absolute; 
+        top: 10px; 
+        right: 15px; 
+        color: #ff4444; 
+        font-size: 1.3em; 
+        font-weight: bold; 
+    }
+    .result { font-size: 2em; margin: 20px; min-height: 80px; }
+    .hand-label { font-size: 1.1em; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>🃏 經典 21點（分牌 + 自動爆牌）</h1>
+    
+    <div class="chips">籌碼：<strong id="chips">1000</strong> | 下注：<strong id="currentBet">10</strong></div>
+    
+    <div>
+        下注金額：
+        <button class="btn-bet" onclick="setBet(10)">10</button>
+        <button class="btn-bet" onclick="setBet(50)">50</button>
+        <button class="btn-bet" onclick="setBet(100)">100</button>
+    </div>
+
+    <!-- 莊家 -->
+    <div class="hand-container">
+        <div class="hand-label">莊家 <span id="dealer-score">?</span></div>
+        <div class="hand" id="dealer-hand"></div>
+    </div>
+
+    <!-- 玩家手牌 -->
+    <div id="player-hands"></div>
+
+    <div class="result" id="result"></div>
+
+    <div>
+        <button class="btn-hit" id="hit">抽牌 (Hit)</button>
+        <button class="btn-stand" id="stand">停牌 (Stand)</button>
+        <button class="btn-split" id="split" style="display:none;">分牌 (Split)</button>
+        <button class="btn-restart" id="restart" style="display:none;" onclick="startNewGame()">再玩一次</button>
+    </div>
+</div>
+
+<script>
+// 遊戲變數
+let deck = [];
+let playerHands = [];        // 玩家可能有多手牌
+let dealerHand = [];
+let currentHandIndex = 0;
+let chips = 1000;
+let currentBet = 10;
+let gameOver = false;
+
+const suits = ['♠','♥','♦','♣'];
+const values = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+
+function createDeck() {
+    deck = [];
+    for (let s of suits) for (let v of values) deck.push({value: v, suit: s});
+    deck.sort(() => Math.random() - 0.5);
+}
+
+function cardValue(card) {
+    if (['J','Q','K'].includes(card.value)) return 10;
+    if (card.value === 'A') return 11;
+    return parseInt(card.value);
+}
+
+function handScore(hand) {
+    let score = 0, aces = 0;
+    for (let c of hand) {
+        let v = cardValue(c);
+        if (v === 11) aces++;
+        score += v;
+    }
+    while (score > 21 && aces--) score -= 10;
+    return score;
+}
+
+function canSplit(hand) {
+    return hand.length === 2 && cardValue(hand[0]) === cardValue(hand[1]);
+}
+
+function renderCard(card, hidden = false) {
+    const div = document.createElement('div');
+    div.className = `card ${hidden ? 'back' : (['♥','♦'].includes(card?.suit) ? 'red' : '')}`;
+    if (hidden) {
+        div.textContent = '🂠';
+    } else {
+        div.innerHTML = `<div>${card.value}</div><div style="font-size:38px">${card.suit}</div>`;
+    }
+    return div;
+}
+
+function renderAll() {
+    // 莊家
+    const dealerEl = document.getElementById('dealer-hand');
+    dealerEl.innerHTML = renderCard(dealerHand[0]).outerHTML;
+    if (!gameOver) {
+        const back = document.createElement('div');
+        back.className = 'card back';
+        back.textContent = '🂠';
+        dealerEl.appendChild(back);
+    } else {
+        dealerHand.slice(1).forEach(c => dealerEl.appendChild(renderCard(c)));
+    }
+    document.getElementById('dealer-score').textContent = gameOver ? handScore(dealerHand) : '?';
+
+    // 玩家手牌
+    const container = document.getElementById('player-hands');
+    container.innerHTML = '';
+
+    playerHands.forEach((hand, i) => {
+        const hc = document.createElement('div');
+        hc.className = 'hand-container';
+        if (i === currentHandIndex && !gameOver) hc.style.borderColor = '#ffd700';
+
+        let label = `你的手牌 ${i+1}　分數: <strong>${handScore(hand)}</strong>`;
+        if (handScore(hand) > 21) label += ' <span style="color:#ff4444">(爆牌)</span>';
+
+        hc.innerHTML = `<div class="hand-label">${label}</div>`;
+        
+        const handDiv = document.createElement('div');
+        handDiv.className = 'hand';
+        hand.forEach(c => handDiv.appendChild(renderCard(c)));
+        hc.appendChild(handDiv);
+        
+        if (handScore(hand) > 21) {
+            const bust = document.createElement('div');
+            bust.className = 'bust';
+            bust.textContent = '爆牌！';
+            hc.appendChild(bust);
+        }
+        container.appendChild(hc);
+    });
+}
+
+function startNewGame() {
+    if (chips < currentBet) { alert("籌碼不足！"); return; }
+    
+    createDeck();
+    playerHands = [[deck.pop(), deck.pop()]];
+    dealerHand = [deck.pop(), deck.pop()];
+    currentHandIndex = 0;
+    gameOver = false;
+
+    document.getElementById('result').innerHTML = '';
+    document.getElementById('hit').disabled = false;
+    document.getElementById('stand').disabled = false;
+    document.getElementById('split').style.display = canSplit(playerHands[0]) ? 'inline-block' : 'none';
+    document.getElementById('restart').style.display = 'none';
+
+    renderAll();
+}
+
+function autoCheckBust() {
+    const score = handScore(playerHands[currentHandIndex]);
+    if (score > 21) {
+        document.getElementById('result').innerHTML = `<span style="color:#ff6666">第 ${currentHandIndex+1} 手牌爆牌！</span>`;
+        setTimeout(() => {
+            nextHand();
+        }, 800);
+        return true;
+    }
+    return false;
+}
+
+function nextHand() {
+    currentHandIndex++;
+    if (currentHandIndex >= playerHands.length) {
+        dealerPlay();   // 所有手牌結束 → 莊家行動
+    } else {
+        document.getElementById('result').innerHTML = '';
+        renderAll();
+        document.getElementById('split').style.display = canSplit(playerHands[currentHandIndex]) ? 'inline-block' : 'none';
+    }
+}
+
+function playerHit() {
+    if (gameOver) return;
+    playerHands[currentHandIndex].push(deck.pop());
+    renderAll();
+
+    if (autoCheckBust()) return;
+    renderAll();
+}
+
+function playerStand() {
+    nextHand();
+}
+
+function dealerPlay() {
+    while (handScore(dealerHand) < 17) {
+        dealerHand.push(deck.pop());
+    }
+    gameOver = true;
+    calculateResult();
+}
+
+function calculateResult() {
+    const dealerScore = handScore(dealerHand);
+    let totalChange = 0;
+    let msg = '';
+
+    playerHands.forEach((hand, i) => {
+        const score = handScore(hand);
+        if (score > 21) {
+            msg += `手牌${i+1}：爆牌輸 -${currentBet}<br>`;
+            totalChange -= currentBet;
+        } else if (dealerScore > 21 || score > dealerScore) {
+            msg += `手牌${i+1}：贏 +${currentBet}<br>`;
+            totalChange += currentBet;
+        } else if (score === dealerScore) {
+            msg += `手牌${i+1}：平手<br>`;
+        } else {
+            msg += `手牌${i+1}：輸 -${currentBet}<br>`;
+            totalChange -= currentBet;
+        }
+    });
+
+    chips += totalChange;
+    document.getElementById('chips').textContent = chips;
+    document.getElementById('result').innerHTML = msg;
+    document.getElementById('restart').style.display = 'inline-block';
+    renderAll();
+}
+
+function splitHand() {
+    if (!canSplit(playerHands[currentHandIndex])) return;
+    const hand = playerHands[currentHandIndex];
+    const hand1 = [hand[0], deck.pop()];
+    const hand2 = [hand[1], deck.pop()];
+
+    playerHands.splice(currentHandIndex, 1, hand1, hand2);
+    renderAll();
+    document.getElementById('split').style.display = 'none';
+}
+
+// 按鈕綁定
+document.getElementById('hit').onclick = playerHit;
+document.getElementById('stand').onclick = playerStand;
+document.getElementById('split').onclick = splitHand;
+
+function setBet(bet) {
+    if (!gameOver) currentBet = Math.min(bet, chips);
+    document.getElementById('currentBet').textContent = currentBet;
+}
+
+startNewGame();
+</script>
+</body>
+</html>
